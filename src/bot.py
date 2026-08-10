@@ -23,6 +23,17 @@ from .export import ExportManager
 from .handlers.user_handlers import UserHandlers
 from .handlers.admin_handlers import AdminHandlers
 from .handlers.inline_handlers import InlineHandlers
+# Import shared conversation state constants from inline handlers
+from .handlers.inline_handlers import (
+    SEARCH_DOMAIN,
+    SELECT_INVENTORY,
+    SELECT_EXACT,
+    GEN_DOMAIN,
+    GEN_INVENTORY,
+    GEN_QUANTITY,
+    GEN_FORMAT,
+    GEN_CONFIRM,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +42,21 @@ class ULPBot:
     """Main ULP Telegram Bot"""
 
     def __init__(self, config_path: str = "config.json"):
-        # Load configuration
-        with open(config_path, 'r') as f:
-            self.config = json.load(f)
+        # Load configuration, try a couple of sensible defaults if not found
+        config_candidates = [config_path, "config.json", "src/config.json", "./config.json"]
+        config_data = None
+        for p in config_candidates:
+            try:
+                with open(p, 'r') as f:
+                    config_data = json.load(f)
+                logger.info(f"Loaded config from {p}")
+                break
+            except FileNotFoundError:
+                continue
+        if config_data is None:
+            raise FileNotFoundError(f"Config file not found. Tried: {config_candidates}")
+
+        self.config = config_data
 
         # Initialize components
         self.db = Database(self.config['database_path'])
@@ -66,6 +89,8 @@ class ULPBot:
         self.app.add_handler(CommandHandler("inventory", self.user_handlers.inventory))
         self.app.add_handler(CommandHandler("history", self.user_handlers.history))
         self.app.add_handler(CommandHandler("settings", self.user_handlers.settings))
+        # Register /generate command so users can use it as a text command as well
+        self.app.add_handler(CommandHandler("generate", self.inline_handlers.start_generate))
 
         # Admin commands
         self.app.add_handler(CommandHandler("admin", self.admin_handlers.admin_panel))
@@ -86,19 +111,22 @@ class ULPBot:
                 CommandHandler("search", self.inline_handlers.start_search)
             ],
             states={
-                1: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.inline_handlers.search_domain_input)]
+                # Use the shared constants from handlers so the handlers and ConversationHandler agree
+                SEARCH_DOMAIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.inline_handlers.search_domain_input)]
             },
             fallbacks=[]
         )
 
         gen_conv_handler = ConversationHandler(
             entry_points=[
-                CallbackQueryHandler(self.inline_handlers.start_generate, pattern="^gen_")
+                CallbackQueryHandler(self.inline_handlers.start_generate, pattern="^gen_"),
+                # allow /generate as entry-point when used as a command
+                CommandHandler("generate", self.inline_handlers.start_generate)
             ],
             states={
-                2: [CallbackQueryHandler(self.inline_handlers.select_inventory, pattern="^gen_inv_")],
-                3: [CallbackQueryHandler(self.inline_handlers.select_quantity, pattern="^qty_")],
-                4: [CallbackQueryHandler(self.inline_handlers.confirm_generation, pattern="^fmt_")]
+                GEN_INVENTORY: [CallbackQueryHandler(self.inline_handlers.select_inventory, pattern="^gen_inv_")],
+                GEN_QUANTITY: [CallbackQueryHandler(self.inline_handlers.select_quantity, pattern="^qty_")],
+                GEN_FORMAT: [CallbackQueryHandler(self.inline_handlers.confirm_generation, pattern="^fmt_")]
             },
             fallbacks=[]
         )
@@ -115,7 +143,11 @@ class ULPBot:
             async with self.app:
                 await self.app.initialize()
                 await self.app.start()
-                await self.app.updater.start_polling()
+                # Use updater polling if present; this matches older patterns but should work
+                # for the Application built via builder(). If your python-telegram-bot version
+                # supports run_polling() you can replace these calls with await self.app.run_polling().
+                if hasattr(self.app, 'updater'):
+                    await self.app.updater.start_polling()
 
                 logger.info("Bot is running. Press Ctrl+C to stop.")
                 await asyncio.Event().wait()
@@ -123,7 +155,8 @@ class ULPBot:
             logger.info("Shutting down...")
         finally:
             if self.app:
-                await self.app.updater.stop()
+                if hasattr(self.app, 'updater'):
+                    await self.app.updater.stop()
                 await self.app.stop()
                 await self.app.shutdown()
 
