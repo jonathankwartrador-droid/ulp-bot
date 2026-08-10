@@ -1,0 +1,14 @@
+{
+  "bot_token": "7858695434:AAGcFSwPFGGgHkdZFG9t3-HJRi1Rk6LxevY",
+  "admin_ids": [7784483006],
+  "database_path": "database/ulp_bot.db",
+  "inventory_path": "inventory/",
+  "logs_path": "logs/",
+  "search_cost": 1,
+  "generation_cost": 2,
+  "daily_search_limit": 100,
+  "daily_generation_limit": 50,
+  "max_file_size": 52428800,
+  "cooldown_seconds": 5,
+  "maintenance_mode": false
+}
